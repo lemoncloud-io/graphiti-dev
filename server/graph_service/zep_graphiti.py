@@ -9,7 +9,7 @@ from graphiti_core.llm_client import LLMClient  # type: ignore
 from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
 
 from graph_service.config import ZepEnvDep
-from graph_service.dto import FactResult
+from graph_service.dto import FactResult, NodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,17 @@ def get_fact_result_from_edge(edge: EntityEdge):
         created_at=edge.created_at,
         expired_at=edge.expired_at,
     )
+
+def get_node_result_from_entity(node: EntityNode):
+    return NodeResult(
+        uuid=node.uuid,
+        name=node.name,
+        labels=node.labels,
+        summary=node.summary,
+        attributes=node.attributes,
+        created_at=node.created_at,
+    )
+
 
 
 ZepGraphitiDep = Annotated[ZepGraphiti, Depends(get_graphiti)]

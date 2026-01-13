@@ -6,7 +6,7 @@ from fastapi import APIRouter, FastAPI, status
 from graphiti_core.nodes import EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
-from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result
+from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result, AddTextsRequest, Text, edge_type_maps, edge_type, entity_type
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
@@ -69,6 +69,45 @@ async def add_messages(
 
     return Result(message='Messages added to processing queue', success=True)
 
+
+@router.post('/build-communities', status_code=status.HTTP_202_ACCEPTED)
+async def build_communities(group_id: str, graphiti: ZepGraphitiDep):
+    """
+    특정 그룹의 노드들을 분석하여 커뮤니티(주제별 그룹)를 형성하고 요약합니다.
+    """
+    async def build_task():
+        await graphiti.build_communities(group_ids=[group_id])
+
+    await async_worker.queue.put(build_task)
+    
+    return Result(message='Community building started in background', success=True)
+
+
+@router.post('/texts', status_code=status.HTTP_202_ACCEPTED)
+async def add_texts(
+    request: AddTextsRequest,
+    graphiti: ZepGraphitiDep,
+):
+
+    async def add_texts_task(m: Text):
+        await graphiti.add_episode(
+            uuid=m.uuid,
+            group_id=request.group_id,
+            name=m.name,
+            episode_body=m.content, # specific strategy content
+            source_description=m.source_description,
+            reference_time=m.timestamp,
+            source=EpisodeType.text,
+            entity_types=entity_type,
+            edge_types=edge_type,
+            edge_type_map=edge_type_maps,
+            custom_extraction_instructions=request.prompt
+        )
+
+    for m in request.texts:
+        await async_worker.queue.put(partial(add_texts_task, m))
+
+    return Result(message='Texts added to processing queue', success=True)
 
 @router.post('/entity-node', status_code=status.HTTP_201_CREATED)
 async def add_entity_node(

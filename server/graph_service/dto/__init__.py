@@ -1,6 +1,6 @@
-from .common import Message, Result
-from .ingest import AddEntityNodeRequest, AddMessagesRequest
-from .retrieve import FactResult, GetMemoryRequest, GetMemoryResponse, SearchQuery, SearchResults
+from .common import Message, Result, Text, Person, Organization, Product, Concept, Location, Datetime, Category, Image, Web, entity_type, edge_type, edge_type_maps, MemberOf, ManagedBy,Published,ScheduledOn,LocatedIn,References,Uses,BelongsTo,HasImage, HasLink
+from .ingest import AddEntityNodeRequest, AddMessagesRequest, AddTextsRequest
+from .retrieve import NodeResult, FactResult, GetMemoryRequest, GetMemoryResponse, SearchQuery, SearchResults
 
 __all__ = [
     'SearchQuery',
@@ -9,7 +9,32 @@ __all__ = [
     'AddEntityNodeRequest',
     'SearchResults',
     'FactResult',
+    'NodeResult',
     'Result',
     'GetMemoryRequest',
     'GetMemoryResponse',
+    'AddTextsRequest',
+    'Text',
+    'Person',
+    'Organization',
+    'Product',
+    'Concept',
+    'Location',
+    'Datetime',
+    'Category',
+    'Image',
+    'Web',
+    'entity_type',
+    'edge_type',
+    'edge_type_maps',
+    'MemberOf',
+    'ManagedBy',
+    'Published',
+    'ScheduledOn',
+    'LocatedIn',
+    'References',
+    'Uses',
+    'BelongsTo',
+    'HasImage',
+    'HasLink'
 ]

@@ -285,14 +285,13 @@ def extract_summary(context: dict[str, Any]) -> list[Message]:
     return [
         Message(
             role='system',
-            content='You are a helpful assistant that extracts entity summaries from the provided text.',
+            content='You are a helpful assistant that extracts entity summaries from the provided text. Always summarize in Korean.',
         ),
         Message(
             role='user',
             content=f"""
         Given the MESSAGES and the ENTITY, update the summary that combines relevant information about the entity
-        from the messages and relevant information from the existing summary.
-
+        from the messages and relevant information from the existing summary. Always summarize in Korean.'
         {summary_instructions}
 
         <MESSAGES>
