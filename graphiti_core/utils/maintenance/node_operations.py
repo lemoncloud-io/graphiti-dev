@@ -49,6 +49,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     DedupResolutionState,
     _build_candidate_indexes,
     _resolve_with_similarity,
+    _resolve_with_dbscan_and_similarity
 )
 from graphiti_core.utils.maintenance.edge_operations import (
     filter_existing_duplicate_of_edges,
@@ -96,6 +97,7 @@ async def extract_nodes(
     start = time()
     llm_client = clients.llm_client
 
+    # 1. 엔티티 타입 컨텍스트 설정
     entity_types_context = [
         {
             'entity_type_id': 0,
@@ -396,7 +398,7 @@ async def resolve_extracted_nodes(
         unresolved_indices=[],
     )
 
-    _resolve_with_similarity(extracted_nodes, indexes, state)
+    _resolve_with_dbscan_and_similarity(clients, extracted_nodes, indexes, state)
 
     await _resolve_with_llm(
         llm_client,
