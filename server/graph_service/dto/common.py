@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
 from graphiti_core.utils.datetime_utils import utc_now
 from pydantic import BaseModel, Field
@@ -38,128 +38,160 @@ class Text(BaseModel):
         default='', description='The description of the source of the text'
     )
 
-class Person(BaseModel):
-    """PEOPLE: 성함 및 직함 포함 (예: '홍길동 팀장')"""
-    full_name: str = Field(..., description="Full name and title")
+class Actor(BaseModel):
+    """ACTOR: 행위 주체 및 책임자 (부서, 기관, 업체 등)"""
+    actor_name: str = Field(..., description="기관명, 부서명 또는 담당 주체")
+    description: str = Field(..., description="역할 및 책임에 대한 상세 설명")
 
-class Organization(BaseModel):
-    """ORGANIZATIONS: 정식 기관/업체 명칭 (예: '단지1 로비')"""
-    org_name: str = Field(..., description="Normalized legal name")
+class Author(BaseModel):
+    """AUTHOR: 문서의 작성자 (개인 성함 및 직함 포함)"""
+    author_name: str = Field(..., description="작성자 성함 및 직함")
+    description: Optional[str] = Field(None, description="소속 부서 등 추가 정보")
 
-class Asset(BaseModel):
-    """ASSETS: 공지사항, 게시물 등 주요 정보 객체 (가장 중심이 되는 노드)"""
-    asset_name: str = Field(..., description="Title of the notice or post")
-    web_url: str | None = Field(None, description="Related link URL")
-    image_url: str | None = Field(None, description="Main image URL")
+class Object(BaseModel):
+    """OBJECT: 공지사항, 문서명, 자산, 식단(메뉴) 등 관리 대상"""
+    object_name: str = Field(..., description="대상 명칭 (예: '3월 소독 안내문', '제육볶음')")
+    description: str = Field(..., description="상세 내용 및 증거 문구")
 
-class Product(BaseModel):
-    """PRODUCTS: 구체적인 제품 이름"""
-    product_name: str = Field(..., description="Specific product name")
+class Procedure(BaseModel):
+    """PROCEDURE: 신청 방법, 업무 단계, 지침 등 행위의 절차"""
+    procedure_name: str = Field(..., description="절차 명칭")
+    description: str = Field(..., description="단계별 상세 가이드라인")
 
-class Service(BaseModel):
-    """SERVICES: 구체적인 서비스 명칭"""
-    service_name: str = Field(..., description="Specific service name")
+class Condition(BaseModel):
+    """CONDITION: 법령, 규정, 자격 조건 등 행위의 근거"""
+    condition_name: str = Field(..., description="규정 또는 조건 명칭")
+    description: str = Field(..., description="제약 사유 및 법적 근거")
 
-class Concept(BaseModel):
-    """CONCEPTS: 도메인 전문 용어 또는 개념"""
-    concept_label: str = Field(..., description="Domain-specific concept")
+class Event(BaseModel):
+    """EVENT: 점검, 사고, 행사 등 특정 시점에 발생하는 사건"""
+    event_name: str = Field(..., description="사건 명칭")
+    description: str = Field(..., description="사건의 상세 내용")
 
 class Location(BaseModel):
-    """LOCATIONS: 구체적인 장소 (예: '단지1 로비', '지하주차장')"""
-    location_name: str = Field(..., description="Specific physical location")
+    """LOCATION: 물리적 장소 또는 시스템 내 위치"""
+    location_name: str = Field(..., description="구체적인 장소명")
 
 class Datetime(BaseModel):
-    """TEMPORAL ENTITIES: YYYY-MM-DD HH:mm:ss 형식의 정규화된 날짜 노드"""
-    date_val: str = Field(..., description="Normalized ISO 8601 string")
+    """DATETIME: YYYY-MM-DD HH:mm:ss 형식의 정규화된 시점"""
+    datetime_name: str = Field(..., description="YYYY-MM-DD HH:mm:ss")
 
-class Category(BaseModel):
-    """CATEGORY: 문서 분류"""
-    category_name: str = Field(..., description="Name of the category")
+class Year(BaseModel):
+    """YEAR: 연도 노드 (시간 계층 최상위)"""
+    year_name: str = Field(..., description="예: '2025'")
+
+class Month(BaseModel):
+    """MONTH: 월 노드"""
+    month_name: str = Field(..., description="예: '3'")
+
+class Day(BaseModel):
+    """DAY: 일 노드"""
+    day_name: str = Field(..., description="예: '15'")
+
+class Week(BaseModel):
+    """WEEK: 주차 노드 (예: '3월 2주차')"""
+    week_name: str = Field(..., description="월 및 주차 정보")
+
+class Concept(BaseModel):
+    """CONCEPT: 전문 용어 또는 도메인 지식"""
+    concept_name: str = Field(..., description="개념명")
+    description: str = Field(..., description="개념의 정의")
 
 class Image(BaseModel):
-    """IMAGE: 첨부 이미지 정보"""
-    url: str = Field(..., description="Direct image link")
-    alt_text: str | None = Field(None, description="Description of the image")
+    """IMAGE: 첨부 이미지"""
+    image_name: str = Field(..., description="이미지 식별자 또는 파일명")
+    image_url: str = Field(..., description="이미지 링크 URL")
 
 class Web(BaseModel):
-    """WEB: 외부 링크 정보"""
-    url: str = Field(..., description="Direct web link")
+    """WEB: 외부 링크"""
+    web_name: str = Field(..., description="링크 제목")
+    web_url: str = Field(..., description="웹 사이트 URL")
 
-# --- 엔티티 타입 등록 ---
-entity_type = {
-    "Person": Person,
-    "Organization": Organization,
-    "Asset": Asset,
-    "Product": Product,
-    "Service": Service,
-    "Concept": Concept,
-    "Location": Location,
-    "Datetime": Datetime,
-    "Category": Category,
-    "Image": Image,
-    "Web": Web,
-}
+
+class Category(BaseModel):
+    """CATEGORY: 카테고리 또는 게시판 분류"""
+    category_name: str = Field(..., description="분류 명칭 (예: '공지사항')")
+
 
 # --- 엣지(Edge) 클래스 정의 ---
-class MemberOf(BaseModel): fact: str = Field(default="MEMBER_OF")
-class ManagedBy(BaseModel): fact: str = Field(default="MANAGED_BY")
-class Published(BaseModel): fact: str = Field(default="PUBLISHED")
-class ScheduledOn(BaseModel): fact: str = Field(default="SCHEDULED_ON")
-class LocatedIn(BaseModel): fact: str = Field(default="LOCATED_IN")
-class References(BaseModel): fact: str = Field(default="REFERENCES")
-class Uses(BaseModel): fact: str = Field(default="USES")
-class BelongsTo(BaseModel): fact: str = Field(default="BELONGS_TO")
-class HasImage(BaseModel): fact: str = Field(default="HAS_IMAGE")
-class HasLink(BaseModel): fact: str = Field(default="HAS_LINK")
+class ExecutedBy(BaseModel): 
+    fact: str = Field(default="EXECUTED_BY", description="작성자나 실행 주체 연결")
 
+class ScheduledOn(BaseModel): 
+    fact: str = Field(default="SCHEDULED_ON", description="특정 시점 또는 작성 일시 할당")
+
+class PartOf(BaseModel): 
+    fact: str = Field(default="PART_OF", description="시간 계층(Day-Month-Year) 구조 형성")
+
+class DependsOn(BaseModel): 
+    fact: str = Field(default="DEPENDS_ON", description="선행 요건 및 법적 근거 참조")
+
+class Triggers(BaseModel): 
+    fact: str = Field(default="TRIGGERS", description="인과관계(A가 B를 유발함) 연결")
+
+class LocatedIn(BaseModel): 
+    fact: str = Field(default="LOCATED_IN", description="물리적/디지털 장소 연결")
+
+class HasDetail(BaseModel): 
+    fact: str = Field(default="HAS_DETAIL", description="이미지, 링크, 메타데이터 연결")
+
+
+# Entity type
+entity_type = {
+    "Actor": Actor, "Author": Author, "Object": Object,
+    "Procedure": Procedure, "Condition": Condition, "Event": Event,
+    "Location": Location, "Datetime": Datetime, "Year": Year,
+    "Month": Month, "Day": Day, "Week": Week, "Concept": Concept,
+    "Image": Image, "Web": Web, "Category": Category
+}
+
+# Edge type
 edge_type = {
-    "MEMBER_OF": MemberOf,
-    "MANAGED_BY": ManagedBy,
-    "PUBLISHED": Published,
+    "EXECUTED_BY": ExecutedBy,
     "SCHEDULED_ON": ScheduledOn,
+    "PART_OF": PartOf,
+    "DEPENDS_ON": DependsOn,
+    "TRIGGERS": Triggers,
     "LOCATED_IN": LocatedIn,
-    "REFERENCES": References,
-    "USES": Uses,
-    "BELONGS_TO": BelongsTo,
-    "HAS_IMAGE": HasImage,
-    "HAS_LINK": HasLink
+    "HAS_DETAIL": HasDetail
 }
 
+# Edge type map
 edge_type_maps = {
-    ("Person", "Organization"): ["MEMBER_OF"],
-    ("Organization", "Category"): ["MEMBER_OF"],
+    # 1. 주체 및 작성 (Who)
+    ("Object", "Author"): ["EXECUTED_BY"],
+    ("Event", "Author"): ["EXECUTED_BY"],
+    ("Procedure", "Author"): ["EXECUTED_BY"],
+    ("Object", "Actor"): ["EXECUTED_BY"],
     
-    # 관리 및 발행 관계
-    ("Asset", "Organization"): ["MANAGED_BY"],
-    ("Asset", "Person"): ["MANAGED_BY"],
-    ("Organization", "Asset"): ["PUBLISHED"],
-    ("Person", "Asset"): ["PUBLISHED"],
+    # 2. 시간 계층 (When - PART_OF)
+    ("Datetime", "Day"): ["PART_OF"],
+    ("Day", "Week"): ["PART_OF"],
+    ("Day", "Month"): ["PART_OF"],
+    ("Week", "Month"): ["PART_OF"],
+    ("Month", "Year"): ["PART_OF"],
     
-    # 시간 및 장소 (게시물 중심 연결)
-    ("Asset", "Datetime"): ["SCHEDULED_ON"],
-    ("Concept", "Datetime"): ["SCHEDULED_ON"],
-    ("Asset", "Location"): ["LOCATED_IN"],
-    ("Organization", "Location"): ["LOCATED_IN"],
+    # 3. 일정 할당 (When - SCHEDULE_ON)
+    ("Object", "Datetime"): ["SCHEDULED_ON"],
+    ("Event", "Datetime"): ["SCHEDULED_ON"],
+    ("Procedure", "Datetime"): ["SCHEDULED_ON"],
     
-    # 참조 및 분류
-    ("Asset", "Asset"): ["REFERENCES"],
-    ("Asset", "Web"): ["HAS_LINK", "REFERENCES"],
-    ("Asset", "Category"): ["BELONGS_TO"],
+    # 4. 인과 관계 및 근거 (Why/How)
+    ("Object", "Condition"): ["DEPENDS_ON"],
+    ("Procedure", "Condition"): ["DEPENDS_ON"],
+    ("Condition", "Actor"): ["DEPENDS_ON"], 
+    ("Event", "Procedure"): ["TRIGGERS"],
+    ("Event", "Event"): ["TRIGGERS"],
     
-    # 이미지 및 미디어 연결 (개선사항 반영)
-    ("Asset", "Image"): ["HAS_IMAGE"],
+    # 5. 장소 (Where)
+    ("Actor", "Location"): ["LOCATED_IN"],
+    ("Object", "Location"): ["LOCATED_IN"],
+    ("Event", "Location"): ["LOCATED_IN"],
     
-    # 도메인 지식
-    ("Organization", "Concept"): ["USES"],
-    ("Person", "Concept"): ["USES"],
-    ("Asset", "Concept"): ["USES"],
+    # 6. 상세 정보 및 미디어 (Metadata)
+    ("Object", "Image"): ["HAS_DETAIL"],
+    ("Object", "Web"): ["HAS_DETAIL"],
+    ("Object", "Concept"): ["HAS_DETAIL"],
+    ("Object", "Category"): ["HAS_DETAIL"],
+    ("Event", "Category"): ["HAS_DETAIL"],
 }
-# class Doc(BaseModel):
-#     uuid: str = Field(..., description='The uuid of the episode')
-#     group_id: str = Field(..., description='The group id of the episode')
-#     name: str = Field(..., description='The name of the episode')
-#     episode_body: str = Field(..., description='The body of the episode')
-#     reference_time: datetime = Field(default_factory=utc_now, description='The reference time of the episode')
-#     source: str = Field(..., description='The source of the episode')
-#     source_description: str = Field(...,)
-    

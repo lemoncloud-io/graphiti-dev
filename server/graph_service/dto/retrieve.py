@@ -36,6 +36,10 @@ class NodeResult(BaseModel):
     attributes: dict[str, Any] = Field(default={})
     created_at: datetime
 
+    class Config:
+        json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
+
+
 class SearchResults(BaseModel):
     facts: Optional[list[FactResult]]
     nodes: Optional[list[NodeResult]]  

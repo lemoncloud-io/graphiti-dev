@@ -1,4 +1,4 @@
-from .common import Message, Result, Text, Person, Organization, Product, Concept, Location, Datetime, Category, Image, Web, entity_type, edge_type, edge_type_maps, MemberOf, ManagedBy,Published,ScheduledOn,LocatedIn,References,Uses,BelongsTo,HasImage, HasLink
+from .common import Message, Result, Text, Actor, Author, Object, Procedure, Condition, Event, Location, Datetime, Year, Month, Day, Week, Concept, Image, Web, Category, ExecutedBy, ScheduledOn, PartOf, DependsOn, Triggers, LocatedIn, HasDetail, entity_type, edge_type, edge_type_maps
 from .ingest import AddEntityNodeRequest, AddMessagesRequest, AddTextsRequest
 from .retrieve import NodeResult, FactResult, GetMemoryRequest, GetMemoryResponse, SearchQuery, SearchResults
 
@@ -15,26 +15,30 @@ __all__ = [
     'GetMemoryResponse',
     'AddTextsRequest',
     'Text',
-    'Person',
-    'Organization',
-    'Product',
-    'Concept',
+    'Actor',
+    'Author',
+    'Object',
+    'Procedure',
+    'Condition',
+    'Event',
     'Location',
     'Datetime',
-    'Category',
+    'Year',
+    'Month',
+    'Day',
+    'Week',
+    'Concept',
     'Image',
     'Web',
+    'Category',
+    'ExecutedBy',
+    'ScheduledOn',
+    'PartOf',
+    'DependsOn',
+    'Triggers',
+    'LocatedIn',
+    'HasDetail',
     'entity_type',
     'edge_type',
-    'edge_type_maps',
-    'MemberOf',
-    'ManagedBy',
-    'Published',
-    'ScheduledOn',
-    'LocatedIn',
-    'References',
-    'Uses',
-    'BelongsTo',
-    'HasImage',
-    'HasLink'
+    'edge_type_maps'
 ]
