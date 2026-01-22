@@ -104,11 +104,11 @@
 
 2. **Graph Retrieve (Fused Search)**
     * **Strategy**: Text(BM25) + Vector + Graph(BFS) 결합
-    * **Flow**:
-        1 **BM25 Search (Text)**: 키워드 기반 노드 검색 (Weight: 02)
-        2 **Vector Search (Embedding)**: 의미 기반 노드 검색 (Weight: 04)
-        3 **BFS Expansion (Graph)**: Vector 검색 상위 노드를 Seed로 하여 연결된 노드(날짜, 상세 정보 등) 확장 (Weight: 04)
-        4 **Fusion**: RRF(Reciprocal Rank Fusion) 방식으로 최종 순위 결정 및 상위 N개 노드 도출
+    * **Flow**:  
+        * a. **BM25 Search (Text)**: 키워드 기반 노드 검색 (Weight: 02)
+        * b. **Vector Search (Embedding)**: 의미 기반 노드 검색 (Weight: 04)
+        * c. **BFS Expansion (Graph)**: Vector 검색 상위 노드를 Seed로 하여 연결된 노드(날짜, 상세 정보 등) 확장 (Weight: 04)
+        * d. **Fusion**: RRF(Reciprocal Rank Fusion) 방식으로 최종 순위 결정 및 상위 N개 노드 도출
 
 3. **Prompt Construction**
     * **Components**:
