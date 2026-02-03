@@ -2,18 +2,15 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import json
 from collections import Counter
-
 from graphiti_core.nodes import EntityNode
 from graphiti_core.utils.datetime_utils import utc_now
 from difflib import SequenceMatcher #* 문자열 유사도 계산
-from sklearn.cluster import DBSCAN
 
 class EntityResolver:
     """Production entity resolution with context-aware disambiguation"""
     
     def __init__(self):
-        self.entity_cache = {}
-        self.canonical_map = {}
+        self.similarity_threshold = 0.75
     
     def compute_entity_similarity(self, entity1: EntityNode, entity2: EntityNode):
         """Compute similarity considering both text and semantic context"""
