@@ -373,6 +373,123 @@ async def _resolve_with_llm(
             state.duplicate_pairs.append((extracted_node, resolved_node))
 
 
+async def _resolve_without_llm(
+    clients: GraphitiClients,
+    extracted_nodes: list[EntityNode],
+    indexes: DedupCandidateIndexes,
+    state: DedupResolutionState,
+) -> None:
+    if not state.unresolved_indices:
+        return
+
+    # 1. Resolver 준비 (clients에 있으면 쓰고 없으면 새로 생성)
+    resolver = clients.resolver
+
+    # 2. 미해결 노드들 리스트업
+    unresolved_nodes = [extracted_nodes[i] for i in state.unresolved_indices]
+    
+    # 3. 내부 정규화 및 매핑 정보 획득
+    normalized_new_nodes, node_to_group_map = resolver.normalize_extracted_nodes(unresolved_nodes)
+
+    # 4. 정규화된 각 그룹(Cluster)을 기존 DB 노드와 비교
+    group_to_existing_map = {}
+    for norm_node in normalized_new_nodes:
+        best_match_node = None
+        max_sim = 0
+
+        # 기존 DB 노드(Candidate)와 비교
+        for candidate in indexes.existing_nodes:
+            sim = resolver.compute_entity_similarity(norm_node, candidate)
+            print("> norm_node name", norm_node.name)
+            print("> existing_nodes name", candidate.name)
+
+            print("> last sim", sim)
+            if sim > max_sim and sim >= 0.99999:
+                max_sim = sim
+                best_match_node = candidate
+        
+        # 기존 노드가 있으면 그것을, 없으면 병합된 새 노드 그대로 사용
+        group_to_existing_map[norm_node] = best_match_node if best_match_node else norm_node
+
+    # 5. 최종 UUID 및 Resolved Nodes 업데이트
+    for i, original_idx in enumerate(state.unresolved_indices):
+        orig_node = extracted_nodes[original_idx]
+        target_group_node = node_to_group_map[i]
+        final_resolved_node = group_to_existing_map[target_group_node]
+
+        state.resolved_nodes[original_idx] = final_resolved_node
+        state.uuid_map[orig_node.uuid] = final_resolved_node.uuid
+        
+        # CASE 1: 기존 DB 노드와 매칭된 경우 (Global Dedupe)
+        if final_resolved_node in indexes.existing_nodes:
+            # DB 노드에 새로운 속성을 병합하는 로직 필요
+            continue 
+
+        # CASE 2: DB에는 없지만, 새 노드들끼리 그룹화된 경우 (Local Dedupe)
+        if final_resolved_node.uuid != orig_node.uuid:
+            state.duplicate_pairs.append((orig_node, final_resolved_node))
+
+    # 6
+    state.unresolved_indices = []
+    logger.info(f"Resolution done: {len(normalized_new_nodes)} clusters matched to DB.")
+
+
+async def resolve_extracted_nodes_v2(
+    clients: GraphitiClients,
+    extracted_nodes: list[EntityNode],
+    episode: EpisodicNode | None = None,
+    previous_episodes: list[EpisodicNode] | None = None,
+    entity_types: dict[str, type[BaseModel]] | None = None,
+    existing_nodes_override: list[EntityNode] | None = None,
+) -> tuple[list[EntityNode], dict[str, str], list[tuple[EntityNode, EntityNode]]]:
+    """Search for existing nodes, resolve deterministic matches, then escalate holdouts to the Normalize Node Function."""
+    # llm_client = clients.llm_client
+    driver = clients.driver
+    existing_nodes = await _collect_candidate_nodes( # 검색된 기존재 노드들의 unique by uuid한 list[EntityNode].
+        clients,
+        extracted_nodes,
+        existing_nodes_override,
+    )
+
+    indexes: DedupCandidateIndexes = _build_candidate_indexes(existing_nodes) # 중복 제거 후보 인덱스
+
+    state = DedupResolutionState(
+            resolved_nodes=[None] * len(extracted_nodes),
+            uuid_map={},
+            unresolved_indices=[],
+            duplicate_pairs=[]
+    )
+
+    _resolve_with_similarity(extracted_nodes, indexes, state)
+
+    await _resolve_without_llm(
+        clients,
+        extracted_nodes,
+        indexes,
+        state
+    )
+
+    for idx, node in enumerate(extracted_nodes):
+        if state.resolved_nodes[idx] is None:
+            state.resolved_nodes[idx] = node
+            state.uuid_map[node.uuid] = node.uuid
+
+    logger.debug(
+        'Resolved nodes: %s',
+        [(node.name, node.uuid) for node in state.resolved_nodes if node is not None],
+    )
+
+    new_node_duplicates: list[
+        tuple[EntityNode, EntityNode]
+    ] = await filter_existing_duplicate_of_edges(driver, state.duplicate_pairs)
+
+    return (
+        [node for node in state.resolved_nodes if node is not None],
+        state.uuid_map,
+        new_node_duplicates,
+    )
+
+
 async def resolve_extracted_nodes(
     clients: GraphitiClients,
     extracted_nodes: list[EntityNode],

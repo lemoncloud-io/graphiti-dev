@@ -1,10 +1,13 @@
+from typing import Any
 import numpy as np
 from sklearn.cluster import DBSCAN
 import json
 from collections import Counter
+
 from graphiti_core.nodes import EntityNode
 from graphiti_core.utils.datetime_utils import utc_now
 from difflib import SequenceMatcher #* 문자열 유사도 계산
+from sklearn.cluster import DBSCAN
 
 class EntityResolver:
     """Production entity resolution with context-aware disambiguation"""
@@ -30,14 +33,14 @@ class EntityResolver:
         feat2 = entity2.attributes
 
         # Type mismatch penalty
-        if feat1['type'] != feat2['type']:
+        if feat1.get('type') != feat2.get('type'):
             base_score *= 0.3
 
         
         # Context similarity boost 
         # - 같은 텍스트여도 type에 따라 동일성 판단 보정.
-        ctx1 = feat1['context'].lower()
-        ctx2 = feat2['context'].lower()
+        ctx1 = feat1.get('context', '').lower()
+        ctx2 = feat2.get('context', '').lower()
         
 
         if ctx1 and ctx2:
@@ -51,8 +54,9 @@ class EntityResolver:
         return base_score
 
 
+    def normalize_extracted_nodes(self, extracted_nodes: list[EntityNode], similarity_threshold: float = 0.75):
+        self.similariy_threshold = similarity_threshold or self.similarity_threshold
 
-    def normalize_extracted_nodes(self, extracted_nodes: list[EntityNode], similarity_threshold: float = 0.75) -> list[EntityNode]:
         """Normalize extracted nodes"""
 
         if not extracted_nodes:
@@ -75,18 +79,16 @@ class EntityResolver:
             min_samples=1,
             metric='precomputed'
         ).fit(distance_matrix)
-        normalized_nodes = []
 
-        
+        normalized_nodes: list[EntityNode] = []
+        node_to_group_map = {} # {원본_index: 최종_병합_노드}
+
         # 3. 클러스터별 병합 수행
         for cluster_id in set(clustering.labels_):
-            cluster_members = [
-                extracted_nodes[i] for i, label in enumerate(clustering.labels_)
-                if label == cluster_id
-            ]
 
-            if not cluster_members:
-                continue
+            # 해당 클러스터에 속한 원본 인덱스들 추출
+            member_indices = [i for i, label in enumerate(clustering.labels_) if label == cluster_id]
+            cluster_members = [extracted_nodes[i] for i in member_indices]
 
             # A. 대표 이름 결정 (빈도수가 가장 높은 이름)
             names = [node.name for node in cluster_members]
@@ -112,10 +114,8 @@ class EntityResolver:
             seen_json = set()
 
             for feature in all_features:
-                # Pydantic 모델인 경우 dict로 변환, 아니면 그대로 사용
                 feature_dict = feature.model_dump() if hasattr(feature, 'model_dump') else feature
 
-                # 중복 체크를 위한 직렬화 (default=str은 datetime 대비)
                 feature_json = json.dumps(feature_dict, sort_keys=True, default=str)
 
                 if feature_json not in seen_json:
@@ -123,13 +123,14 @@ class EntityResolver:
                     unique_features.append(feature_dict)
 
             merged_attributes["extraction_features"] = json.dumps(unique_features, ensure_ascii=False)
+
             merged_attributes["occurrence_count"] = len(cluster_members)
 
 
             # D. 새로운 EntityNode 생성 (병합본)
             new_node = EntityNode(
                 name=canonical_name,
-                group_id=cluster_members[0].group_id, # 같은 에피소드 내이므로 동일
+                group_id=cluster_members[0].group_id,
                 labels=list(all_labels),
                 summary='',
                 created_at=utc_now(),
@@ -137,5 +138,10 @@ class EntityResolver:
             )
             normalized_nodes.append(new_node)
 
-        return normalized_nodes    
+            # 핵심: 이 클러스터에 속했던 모든 원본 인덱스가 이 new_node를 바라보게 함
+            for idx in member_indices:
+                node_to_group_map[idx] = new_node
+
+        return normalized_nodes, node_to_group_map
+        
 
