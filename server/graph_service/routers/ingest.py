@@ -4,9 +4,10 @@ from functools import partial
 
 from fastapi import APIRouter, FastAPI, status
 from graphiti_core.nodes import EpisodeType  # type: ignore
+from graphiti_core.utils.datetime_utils import utc_now
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
-from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result, AddTextsRequest, Text, edge_type_maps, edge_type, entity_type
+from graph_service.dto import NormalizeNodeRequest, SaveEpisodeRequest, AddEntityNodeRequest, AddMessagesRequest, Message, Result, AddTextsRequest, Text, edge_type_maps, edge_type, entity_type
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
@@ -81,6 +82,41 @@ async def build_communities(group_id: str, graphiti: ZepGraphitiDep):
     await async_worker.queue.put(build_task)
     
     return Result(message='Community building started in background', success=True)
+
+
+@router.post('/normalize-node', status_code=status.HTTP_200_OK)
+async def normalize_node(request: NormalizeNodeRequest, graphiti: ZepGraphitiDep):
+    normalized_node = await graphiti.normalize_node_v2(group_id=request.group_id, extracted_nodes=request.nodes)
+    normalized= [ 
+            {
+                "name": node.name,
+                "labels": node.labels,
+                "summary": node.summary,
+                "attribute": node.attributes,
+                "nameEmbed": node.name_embedding
+            } for node in normalized_node.nodes]
+
+    return normalized
+
+
+
+@router.post('/save-episode', status_code=status.HTTP_202_ACCEPTED)
+async def save_episode(
+    request: SaveEpisodeRequest,
+    graphiti: ZepGraphitiDep,
+):
+    save_episode = await graphiti.add_episode_v2(
+            group_id=request.group_id,
+            name=request.name,
+            episode_body=request.content, # specific strategy content
+            source_description=request.name,
+            reference_time=utc_now(),
+            extract_nodes=request.nodes,
+            extract_edges=request.edges,
+            source=EpisodeType.text,
+        )
+
+    return save_episode
 
 
 @router.post('/texts', status_code=status.HTTP_202_ACCEPTED)

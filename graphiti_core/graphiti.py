@@ -17,6 +17,7 @@ limitations under the License.
 import logging
 from datetime import datetime
 from time import time
+from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -128,6 +129,10 @@ class AddBulkEpisodeResults(BaseModel):
 class AddTripletResults(BaseModel):
     nodes: list[EntityNode]
     edges: list[EntityEdge]
+
+
+class NormalizeNodeResults(BaseModel):
+    nodes: list[EntityNode]
 
 
 class Graphiti:
@@ -896,55 +901,65 @@ class Graphiti:
                 span.record_exception(e)
                 raise e
             
-    def create_node(self, node, group_id: str):
-        labels: list[str] = list({'Entity', str(node['labels'][0])})
+
+    def create_node(self, node: dict[str, Any], group_id: str):
 
         return EntityNode(
             name=node['name'],
             group_id=group_id,
-            labels=labels,
+            labels=node['labels'],
             summary='',
             created_at=utc_now(),
-            name_embedding=node.get('name_embedding'),
-            attributes=node.get('attribute')
-        )
-
-    def create_summary(self, node, nodes: list[EntityNode], group_id: str):
-        source_node_idx = node['id']
-        source_node = nodes[source_node_idx]
-
-        return EntityNode(
-            uuid=source_node.uuid,
-            name=source_node.name,
-            group_id=source_node.group_id,
-            labels=source_node.labels,
-            summary=node['summary'] if node.get('summary') else '',
-            created_at=utc_now(),
-            name_embedding=source_node.name_embedding,
-            attributes=source_node.attributes
+            name_embedding=node['nameEmbed'],
+            attributes=node['attributes']
         )
     
-    def create_edge(self, edge, nodes: list[EntityNode], group_id: str, episode: EpisodicNode):
-        # 안전하게 인덱스 추출
+    def create_edge(self, edge: dict[str, Any], nodes: list[EntityNode], group_id: str, episode: EpisodicNode):
         s_idx = int(edge.get('sourceNodeId', 0))
         t_idx = int(edge.get('targetNodeId', 0))
         
-        # 인덱스 범위 초과 방지
         source_uuid = nodes[s_idx].uuid if s_idx < len(nodes) else "UNKNOWN"
         target_uuid = nodes[t_idx].uuid if t_idx < len(nodes) else "UNKNOWN"
 
         return EntityEdge(
             source_node_uuid=source_uuid,
             target_node_uuid=target_uuid,
-            name=edge.get('type', 'RELATES_TO'),
+            name=edge['type'],
             group_id=group_id,
-            fact=edge.get('relation', ''),
+            fact=edge['relation'],
             episodes=[episode.uuid],
             created_at=utc_now(),
-            fact_embedding=edge.get('fact_embedding'),
+            fact_embedding=edge['relationEmbed'],
             valid_at=episode.valid_at or utc_now()
         )
+    
+    async def normalize_node_v2(
+        self,
+        group_id: str,
+        extracted_nodes: list[dict[str, Any]],
+    ) -> NormalizeNodeResults:
+        print('> group id', group_id)
+        
+        # valid parameters
+        if group_id:
+            validate_group_id(group_id)
+            if group_id != self.driver._database:
+                self.driver = self.driver.clone(database=group_id)
+                self.clients.driver = self.driver
+        else:
+            raise GroupIdNotFoundError
 
+        entity_nodes = [self.create_node(node, group_id) for node in extracted_nodes]
+
+        # 노드 정규화
+        nodes, uuid_map, _ = await resolve_extracted_nodes_v2(
+            self.clients,
+            entity_nodes,
+        )
+
+        return NormalizeNodeResults(
+            nodes=nodes
+        )
 
     async def add_episode_v2(
         self,
@@ -953,26 +968,14 @@ class Graphiti:
         episode_body: str,
         source_description: str,
         reference_time: datetime,
-        extract_nodes: list[object],
-        extract_edges: list[object],
-        summary_nodes: list[object],
+        extract_nodes: list[dict[str, Any]],
+        extract_edges: list[dict[str, Any]],
         source: EpisodeType = EpisodeType.text,
-        entity_types: dict[str, type[BaseModel]] | None = None,
-        excluded_entity_types: list[str] | None = None,
-        edge_types: dict[str, type[BaseModel]] | None = None,
-        edge_type_map: dict[tuple[str, str], list[str]] | None = None,
     ) -> AddEpisodeResults:
-        """
-        [node] 노드 추출; A
-        [graphiti] 노드 정규화 w/ A
-        [node] 엣지 추출 w/ A
-        [node] 노드 요약 w/ A
-        [graphiti] 저장
-        """
         start = time()
         now = utc_now()
 
-        # STEP.0-1 valid parameters
+        # STEP.0 valid parameters
         if group_id:
             validate_group_id(group_id)
             if group_id != self.driver._database:
@@ -985,7 +988,7 @@ class Graphiti:
         with self.tracer.start_span('add_episode_v2') as span:
             try:
 
-                # Get or create episode
+                # STEP.1 Get or create episode
                 episode = EpisodicNode(
                         name=name,
                         group_id=group_id,
@@ -998,47 +1001,16 @@ class Graphiti:
                     
                 )
 
-                edge_type_map_default = (
-                    {('Entity', 'Entity'): list(edge_types.keys())}
-                    if edge_types is not None
-                    else {('Entity', 'Entity'): []}
-                )
-
-                # STEP. 노드 추출
-                extracted_nodes: list[EntityNode] = [ self.create_node(node, group_id) for node in extract_nodes]
+                # STEP.2 create nodes and edges
+                entity_nodes = [self.create_node(node, group_id) for node in extract_nodes]
+                entity_edges = [self.create_edge(edge, entity_nodes, group_id, episode) for edge in extract_edges]
                 
-
-                # STEP. 노드 정규화
-                nodes, uuid_map, _ = await resolve_extracted_nodes_v2(
-                    self.clients,
-                    extracted_nodes,
-                    episode,
-                    entity_types = entity_types,
-                )
-
-                # STEP. 엣지 추출
-                extracted_edges: list[EntityEdge] = [ self.create_edge(edge, nodes, group_id, episode) for edge in extract_edges]
-                edges = resolve_edge_pointers(extracted_edges, uuid_map)
-                resolved_edges, invalidated_edges = await resolve_extracted_edges_v2(
-                    self.clients,
-                    edges,
-                    episode,
-                    nodes,
-                    edge_types or {},
-                    edge_type_map or edge_type_map_default,
-                )
-
-                entity_edges = resolved_edges + invalidated_edges
-
-                # STEP. 노드 속성 추출 (Summary)
-                hydrated_nodes: list[EntityNode] = [ self.create_summary(node, nodes, group_id) for node in summary_nodes]
-
-                # STEP. Process and Save Episode
+                # STEP.3 Process and Save Episode
                 # - _process_episode_data: 에피소드 노드와 엣지, 그리고 처리된 엔티티 노드와 엣지들을 DB에 저장합니다.
                 #   - build_episodic_edges: 에피소드 노드와 엔티티 노드들을 연결하는 'MENTIONS' 엣지를 생성합니다.
                 #   - add_nodes_and_edges_bulk: 노드, 엣지, 에피소드 데이터를 일괄적으로 DB에 저장(Merge/Create)합니다.
                 episodic_edges, episode = await self._process_episode_data(
-                    episode, hydrated_nodes, entity_edges, now
+                    episode, entity_nodes, entity_edges, now
                 )
                 end = time()
 
@@ -1049,11 +1021,8 @@ class Graphiti:
                         'episode.source': source.value,
                         'episode.reference_time': reference_time.isoformat(),
                         'group_id': group_id,
-                        'node.count': len(hydrated_nodes),
+                        'node.count': len(entity_nodes),
                         'edge.count': len(entity_edges),
-                        'edge.invalidated_count': len(invalidated_edges),
-                        'entity_types.count': len(entity_types) if entity_types else 0,
-                        'edge_types.count': len(edge_types) if edge_types else 0,
                         'duration_ms': (end - start) * 1000,
                     }
                 )
@@ -1062,7 +1031,7 @@ class Graphiti:
                 return AddEpisodeResults(
                     episode=episode,
                     episodic_edges=episodic_edges,
-                    nodes=hydrated_nodes,
+                    nodes=entity_nodes,
                     edges=entity_edges,
                     communities=[],
                     community_edges=[],
@@ -1072,7 +1041,8 @@ class Graphiti:
                 span.set_status('error', str(e))
                 span.record_exception(e)
                 raise e
-              
+            
+        
 
     async def add_episode_bulk(
         self,

@@ -1,5 +1,5 @@
 from .common import Message, Result, Text, Actor, Author, Object, Procedure, Condition, Event, Location, Datetime, Year, Month, Day, Week, Concept, Image, Web, Category, ExecutedBy, ScheduledOn, PartOf, DependsOn, Triggers, LocatedIn, HasDetail, entity_type, edge_type, edge_type_maps
-from .ingest import AddEntityNodeRequest, AddMessagesRequest, AddTextsRequest
+from .ingest import AddEntityNodeRequest, AddMessagesRequest, AddTextsRequest, NormalizeNodeRequest, SaveEpisodeRequest
 from .retrieve import NodeResult, FactResult, GetMemoryRequest, GetMemoryResponse, SearchQuery, SearchResults
 
 __all__ = [
@@ -40,5 +40,7 @@ __all__ = [
     'HasDetail',
     'entity_type',
     'edge_type',
-    'edge_type_maps'
+    'edge_type_maps',
+    'NormalizeNodeRequest',
+    'SaveEpisodeRequest'
 ]
