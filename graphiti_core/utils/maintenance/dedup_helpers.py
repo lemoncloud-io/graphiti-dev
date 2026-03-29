@@ -25,6 +25,8 @@ from functools import lru_cache
 from hashlib import blake2b
 from typing import TYPE_CHECKING
 
+from graphiti_core.graphiti_types import GraphitiClients
+
 if TYPE_CHECKING:
     from graphiti_core.nodes import EntityNode
 
@@ -245,6 +247,57 @@ def _resolve_with_similarity(
 
         state.unresolved_indices.append(idx)
 
+def _resolve_with_dbscan_and_similarity(
+    clients: GraphitiClients,
+    extracted_nodes: list[EntityNode],
+    indexes: DedupCandidateIndexes,
+    state: DedupResolutionState,
+) -> None:
+    """
+    DBSCAN(수학적 정규화)을 우선 실행하고, 실패 시 기존 유사도 알고리즘을 수행하는 통합 함수
+    """
+    
+    # 1. DBSCAN (EntityResolver) 로직 실행
+    if hasattr(clients, 'resolver') and clients.resolver is not None:
+        all_candidate_pool = extracted_nodes + indexes.existing_nodes
+        
+        # Resolver용 데이터 정규화 준비
+        resolver_input = []
+        for node in all_candidate_pool:
+            meta = node.attributes.get('extraction_features', {})
+            resolver_input.append({
+                "surface_form": node.name,
+                "context": meta.get('context', ""),
+                "features": meta.get('features', {}),
+                "type": meta.get('type', "Entity")
+            })
+        
+        # DBSCAN 실행 (클러스터링 수행)
+        clients.resolver.resolve_entities(resolver_input)
+        
+        # Canonical Form 기반 매칭 시도
+        for idx, node in enumerate(extracted_nodes):
+            canonical_name = clients.resolver.get_canonical_form(node.name)
+            
+            # 1-1. 정규화된 이름이 기존 노드 중에 있는지 확인
+            # (기존 indexes.normalized_existing 활용하여 속도 향상)
+            exact_normalized = _normalize_string_exact(canonical_name)
+            existing_matches = indexes.normalized_existing.get(exact_normalized, [])
+            
+            if existing_matches:
+                # 가장 적절한 기존 노드와 매칭 (첫 번째 노드 혹은 가장 신뢰도 높은 노드)
+                match = existing_matches[0]
+                state.resolved_nodes[idx] = match
+                state.uuid_map[node.uuid] = match.uuid
+                if match.uuid != node.uuid:
+                    state.duplicate_pairs.append((node, match))
+            else:
+                # 정규화는 되었으나 기존 노드 중 매칭이 없으면 다음 단계(유사도 혹은 LLM)를 위해 보류
+                state.unresolved_indices.append(idx)
+    else:
+        # Resolver가 없는 경우에만 기존 Jaccard/MinHash 로직 실행
+        _resolve_with_similarity(extracted_nodes, indexes, state)
+
 
 __all__ = [
     'DedupCandidateIndexes',
@@ -259,4 +312,5 @@ __all__ = [
     '_FUZZY_JACCARD_THRESHOLD',
     '_build_candidate_indexes',
     '_resolve_with_similarity',
+    '_resolve_with_dbscan_and_similarity'
 ]

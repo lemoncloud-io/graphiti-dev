@@ -17,6 +17,7 @@ limitations under the License.
 import logging
 from datetime import datetime
 from time import time
+from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -35,7 +36,7 @@ from graphiti_core.edges import (
     create_entity_edge_embeddings,
 )
 from graphiti_core.embedder import EmbedderClient, OpenAIEmbedder
-from graphiti_core.errors import NodeNotFoundError
+from graphiti_core.errors import GroupIdNotFoundError, NodeNotFoundError
 from graphiti_core.graphiti_types import GraphitiClients
 from graphiti_core.helpers import (
     get_default_group_id,
@@ -86,6 +87,7 @@ from graphiti_core.utils.maintenance.edge_operations import (
     extract_edges,
     resolve_extracted_edge,
     resolve_extracted_edges,
+    resolve_extracted_edges_v2,
 )
 from graphiti_core.utils.maintenance.graph_data_operations import (
     EPISODE_WINDOW_LEN,
@@ -95,8 +97,11 @@ from graphiti_core.utils.maintenance.node_operations import (
     extract_attributes_from_nodes,
     extract_nodes,
     resolve_extracted_nodes,
+    resolve_extracted_nodes_v2,
 )
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
+
+from graphiti_core.normalize import EntityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +131,10 @@ class AddTripletResults(BaseModel):
     edges: list[EntityEdge]
 
 
+class NormalizeNodeResults(BaseModel):
+    nodes: list[EntityNode]
+
+
 class Graphiti:
     def __init__(
         self,
@@ -140,6 +149,7 @@ class Graphiti:
         max_coroutines: int | None = None,
         tracer: Tracer | None = None,
         trace_span_prefix: str = 'graphiti',
+        resolver: EntityResolver | None = None,
     ):
         """
         Initialize a Graphiti instance.
@@ -224,12 +234,19 @@ class Graphiti:
         # Set tracer on clients
         self.llm_client.set_tracer(self.tracer)
 
+        # Initialize resolver
+        if resolver:
+            self.resolver = resolver
+        else:
+            self.resolver = EntityResolver()
+
         self.clients = GraphitiClients(
             driver=self.driver,
             llm_client=self.llm_client,
             embedder=self.embedder,
             cross_encoder=self.cross_encoder,
             tracer=self.tracer,
+            resolver=self.resolver
         )
 
         # Capture telemetry event
@@ -710,6 +727,7 @@ class Graphiti:
         with self.tracer.start_span('add_episode') as span:
             try:
                 # Retrieve previous episodes for context
+                # STEP.1 맥락을 위해 이전 Episode를 검색함
                 previous_episodes = (
                     await self.retrieve_episodes(
                         reference_time,
@@ -722,6 +740,7 @@ class Graphiti:
                 )
 
                 # Get or create episode
+                # STEP.2 저장할 EpisodeNode get OR create. 
                 episode = (
                     await EpisodicNode.get_by_uuid(self.driver, uuid)
                     if uuid is not None
@@ -738,6 +757,7 @@ class Graphiti:
                 )
 
                 # Create default edge type map
+                # STEP.3 엣지 타입의 기본 맵을 생성.
                 edge_type_map_default = (
                     {('Entity', 'Entity'): list(edge_types.keys())}
                     if edge_types is not None
@@ -745,6 +765,16 @@ class Graphiti:
                 )
 
                 # Extract and resolve nodes
+                # STEP.4 노드 추출
+                # - extract_nodes: LLM을 사용하여 에피소드 텍스트에서 엔티티(노드)를 추출합니다.
+                #   - entity type context의 name, descriptions 정리하기.
+                #  1. 엔티티 타입 컨텍스트 정의 (기본 'Entity' + 제공된 타입들)
+                #  2. LLM을 위한 컨텍스트 준비 (에피소드 내용, 타임스탬프, 이전 에피소드, 지침, 엔티티 타입 등)
+                #  3. 에피소드 소스 타입(message, text, json)에 따라 적절한 프롬프트로 LLM 호출
+                #  4. LLM 응답을 ExtractedEntities 모델로 파싱
+                #  5. 추출된 엔티티 필터링 (이름이 비어있는 경우 제거)
+                #  6. 추출된 데이터를 EntityNode 객체로 변환 (타입 매핑 및 제외 처리 포함)
+                #  7. 최종 추출된 노드 리스트 반환
                 extracted_nodes = await extract_nodes(
                     self.clients,
                     episode,
@@ -753,6 +783,15 @@ class Graphiti:
                     excluded_entity_types,
                     custom_extraction_instructions,
                 )
+
+                # Resolve extracted nodes (deduplication)
+                # STEP.5 추출된 노드 중복 제거 및 해결
+                # - resolve_extracted_nodes: 추출된 노드들을 기존 그래프의 노드들과 비교하여 중복을 제거하고 해결합니다.
+                #   - _collect_candidate_nodes: 각 추출된 노드 이름으로 기존 그래프에서 후보 노드들을 검색(Hybrid Search)합니다.
+                #   - _build_candidate_indexes: 후보 노드들에 대한 인덱스(MinHash 등)를 생성합니다.
+                #   - _resolve_with_similarity: 텍스트 유사도(Jaccard)를 기반으로 결정적인 중복을 해결합니다.
+                #   - _resolve_with_llm: 유사하지만 확실하지 않은 경우 LLM(dedupe_nodes.nodes)을 사용하여 중복 여부를 판단합니다.
+                #   - filter_existing_duplicate_of_edges: 이미 'IS_DUPLICATE_OF' 엣지로 연결된 중복 관계를 확인합니다.
 
                 nodes, uuid_map, _ = await resolve_extracted_nodes(
                     self.clients,
@@ -763,6 +802,15 @@ class Graphiti:
                 )
 
                 # Extract and resolve edges in parallel with attribute extraction
+                # STEP.6 엣지 추출 및 해결 (Layer 2)
+                #   - extract_edges: LLM(extract_edges.edge)을 사용하여 노드 간의 관계를 추출합니다.
+                #   - resolve_edge_pointers: 노드 중복 제거 결과(uuid_map)를 바탕으로 엣지의 소스/타겟 UUID를 갱신합니다.
+                #   - resolve_extracted_edges: 추출된 엣지를 검증하고 기존 엣지와 병합하거나 모순을 해결합니다.
+                #     - create_entity_edge_embeddings: 엣지의 사실(fact)에 대한 임베딩을 생성합니다.
+                #     - EntityEdge.get_between_nodes: 두 노드 사이에 이미 존재하는 엣지를 DB에서 조회합니다.
+                #     - search (related_edges): 추출된 엣지와 관련된 기존 엣지들을 검색합니다.
+                #     - search (invalidation_candidates): 모순될 가능성이 있는 기존 엣지들을 검색합니다.
+                #     - resolve_extracted_edge: LLM(dedupe_edges.resolve_edge)을 사용하여 중복 엣지 병합 및 모순된 엣지(invalidated)를 식별합니다.
                 resolved_edges, invalidated_edges = await self._extract_and_resolve_edges(
                     episode,
                     extracted_nodes,
@@ -776,6 +824,12 @@ class Graphiti:
                 )
 
                 # Extract node attributes
+                # STEP.7 노드 속성 추출
+                # - extract_attributes_from_nodes: 해결된 노드들의 추가 속성과 요약을 추출합니다.
+                #   - extract_attributes_from_node: 각 노드에 대해 속성 및 요약 추출을 수행합니다.
+                #     - _extract_entity_attributes: LLM(extract_nodes.extract_attributes)을 사용하여 노드의 구조적 속성을 추출합니다.
+                #     - _extract_entity_summary: LLM(extract_nodes.extract_summary)을 사용하여 노드에 대한 요약을 생성/갱신합니다.
+                #   - create_entity_node_embeddings: 노드 이름에 대한 임베딩을 생성합니다.
                 hydrated_nodes = await extract_attributes_from_nodes(
                     self.clients, nodes, episode, previous_episodes, entity_types
                 )
@@ -783,11 +837,22 @@ class Graphiti:
                 entity_edges = resolved_edges + invalidated_edges
 
                 # Process and save episode data
+                # STEP.8 에피소드 데이터 처리 및 저장
+                # - _process_episode_data: 에피소드 노드와 엣지, 그리고 처리된 엔티티 노드와 엣지들을 DB에 저장합니다.
+                #   - build_episodic_edges: 에피소드 노드와 엔티티 노드들을 연결하는 'MENTIONS' 엣지를 생성합니다.
+                #   - add_nodes_and_edges_bulk: 노드, 엣지, 에피소드 데이터를 일괄적으로 DB에 저장(Merge/Create)합니다.
                 episodic_edges, episode = await self._process_episode_data(
                     episode, hydrated_nodes, entity_edges, now
                 )
 
                 # Update communities if requested
+                # STEP.9 커뮤니티 업데이트 (요청 시)
+                # - update_community: 변경된 노드들이 속한 커뮤니티 정보를 갱신합니다.
+                #   - determine_entity_community: 해당 노드가 속할 커뮤니티를 찾거나 새로 생성해야 하는지 결정합니다.
+                #   - summarize_pair: LLM(summarize_nodes.summarize_pair)을 사용하여 노드 요약과 기존 커뮤니티 요약을 통합합니다.
+                #   - generate_summary_description: 통합된 요약을 바탕으로 커뮤니티의 새로운 이름/설명을 생성합니다.
+                #   - build_community_edges: 노드와 커뮤니티를 연결하는 'HAS_MEMBER' 엣지를 생성합니다.
+                #   - community.save: 갱신된 커뮤니티 정보를 DB에 저장합니다.
                 communities = []
                 community_edges = []
                 if update_communities:
@@ -835,6 +900,149 @@ class Graphiti:
                 span.set_status('error', str(e))
                 span.record_exception(e)
                 raise e
+            
+
+    def create_node(self, node: dict[str, Any], group_id: str):
+
+        return EntityNode(
+            name=node['name'],
+            group_id=group_id,
+            labels=node['labels'],
+            summary='',
+            created_at=utc_now(),
+            name_embedding=node['nameEmbed'],
+            attributes=node['attributes']
+        )
+    
+    def create_edge(self, edge: dict[str, Any], nodes: list[EntityNode], group_id: str, episode: EpisodicNode):
+        s_idx = int(edge.get('sourceNodeId', 0))
+        t_idx = int(edge.get('targetNodeId', 0))
+        
+        source_uuid = nodes[s_idx].uuid if s_idx < len(nodes) else "UNKNOWN"
+        target_uuid = nodes[t_idx].uuid if t_idx < len(nodes) else "UNKNOWN"
+
+        return EntityEdge(
+            source_node_uuid=source_uuid,
+            target_node_uuid=target_uuid,
+            name=edge['type'],
+            group_id=group_id,
+            fact=edge['relation'],
+            episodes=[episode.uuid],
+            created_at=utc_now(),
+            fact_embedding=edge['relationEmbed'],
+            valid_at=episode.valid_at or utc_now()
+        )
+    
+    async def normalize_node_v2(
+        self,
+        group_id: str,
+        extracted_nodes: list[dict[str, Any]],
+    ) -> NormalizeNodeResults:
+        print('> group id', group_id)
+        
+        # valid parameters
+        if group_id:
+            validate_group_id(group_id)
+            if group_id != self.driver._database:
+                self.driver = self.driver.clone(database=group_id)
+                self.clients.driver = self.driver
+        else:
+            raise GroupIdNotFoundError
+
+        entity_nodes = [self.create_node(node, group_id) for node in extracted_nodes]
+
+        # 노드 정규화
+        nodes, uuid_map, _ = await resolve_extracted_nodes_v2(
+            self.clients,
+            entity_nodes,
+        )
+
+        return NormalizeNodeResults(
+            nodes=nodes
+        )
+
+    async def add_episode_v2(
+        self,
+        group_id: str,
+        name: str,
+        episode_body: str,
+        source_description: str,
+        reference_time: datetime,
+        extract_nodes: list[dict[str, Any]],
+        extract_edges: list[dict[str, Any]],
+        source: EpisodeType = EpisodeType.text,
+    ) -> AddEpisodeResults:
+        start = time()
+        now = utc_now()
+
+        # STEP.0 valid parameters
+        if group_id:
+            validate_group_id(group_id)
+            if group_id != self.driver._database:
+                self.driver = self.driver.clone(database=group_id)
+                self.clients.driver = self.driver
+        else:
+            raise GroupIdNotFoundError
+
+
+        with self.tracer.start_span('add_episode_v2') as span:
+            try:
+
+                # STEP.1 Get or create episode
+                episode = EpisodicNode(
+                        name=name,
+                        group_id=group_id,
+                        labels=[],
+                        source=source,
+                        content=episode_body,
+                        source_description=source_description,
+                        created_at=now,
+                        valid_at=reference_time,
+                    
+                )
+
+                # STEP.2 create nodes and edges
+                entity_nodes = [self.create_node(node, group_id) for node in extract_nodes]
+                entity_edges = [self.create_edge(edge, entity_nodes, group_id, episode) for edge in extract_edges]
+                
+                # STEP.3 Process and Save Episode
+                # - _process_episode_data: 에피소드 노드와 엣지, 그리고 처리된 엔티티 노드와 엣지들을 DB에 저장합니다.
+                #   - build_episodic_edges: 에피소드 노드와 엔티티 노드들을 연결하는 'MENTIONS' 엣지를 생성합니다.
+                #   - add_nodes_and_edges_bulk: 노드, 엣지, 에피소드 데이터를 일괄적으로 DB에 저장(Merge/Create)합니다.
+                episodic_edges, episode = await self._process_episode_data(
+                    episode, entity_nodes, entity_edges, now
+                )
+                end = time()
+
+                # STEP. Add span attributes (logging)
+                span.add_attributes(
+                    {
+                        'episode.uuid': episode.uuid,
+                        'episode.source': source.value,
+                        'episode.reference_time': reference_time.isoformat(),
+                        'group_id': group_id,
+                        'node.count': len(entity_nodes),
+                        'edge.count': len(entity_edges),
+                        'duration_ms': (end - start) * 1000,
+                    }
+                )
+
+                # STEP. Return Saved Episode
+                return AddEpisodeResults(
+                    episode=episode,
+                    episodic_edges=episodic_edges,
+                    nodes=entity_nodes,
+                    edges=entity_edges,
+                    communities=[],
+                    community_edges=[],
+                )
+
+            except Exception as e:
+                span.set_status('error', str(e))
+                span.record_exception(e)
+                raise e
+            
+        
 
     async def add_episode_bulk(
         self,

@@ -18,6 +18,7 @@ import logging
 from datetime import datetime
 from time import time
 
+import numpy as np
 from pydantic import BaseModel
 from typing_extensions import LiteralString
 
@@ -391,6 +392,82 @@ async def resolve_extracted_edges(
     )
 
     return resolved_edges, invalidated_edges
+
+async def resolve_extracted_edges_v2(
+    clients: GraphitiClients,
+    extracted_edges: list[EntityEdge],
+    episode: EpisodicNode,
+    entities: list[EntityNode],
+    edge_types: dict[str, type[BaseModel]],
+    edge_type_map: dict[tuple[str, str], list[str]],,
+) -> tuple[list[EntityEdge], list[EntityEdge]]:
+    if not extracted_edges:
+        return [], []
+
+    driver = clients.driver
+    embedder = clients.embedder
+    
+    await create_entity_edge_embeddings(embedder, extracted_edges)
+
+    # 2. 동일 노드 쌍 사이의 기존 엣지들 조회
+    valid_edges_list = await semaphore_gather(
+        *[
+            EntityEdge.get_between_nodes(driver, edge.source_node_uuid, edge.target_node_uuid)
+            for edge in extracted_edges
+        ]
+    )
+
+    # 3. 기존 엣지들의 임베딩(숫자 지문) 로드 (병렬 처리)
+    all_existing_edges: list[EntityEdge] = [edge for sublist in valid_edges_list for edge in sublist]
+    if all_existing_edges:
+        # load_fact_embedding을 통해 DB에 저장된 벡터를 가져옴
+        await semaphore_gather(
+            *[edge.load_fact_embedding(driver) for edge in all_existing_edges]
+        )
+
+    resolved_edges: list[EntityEdge] = []
+    invalidated_edges: list[EntityEdge] = []
+
+    # 4. 비교 로직 (Name 일치 + Fact 유사도)
+    for ext_edge, existing_edges in zip(extracted_edges, valid_edges_list):
+        is_duplicate = False
+        print(f"New Edge Embedding: {ext_edge.fact_embedding[:5] if ext_edge.fact_embedding else 'MISSING'}")
+        
+        for ex_edge in existing_edges:
+            # 2. DB에서 가져온 기존 엣지의 임베딩 확인
+            print(f"Existing Edge Embedding: {ex_edge.fact_embedding[:5] if ex_edge.fact_embedding else 'MISSING'}")
+            # 4-1. Name(타입)이 다르면 비교할 가치 없음
+            if ext_edge.name != ex_edge.name:
+                continue
+                
+            # 4-2. Fact(문장)의 의미적 유사도 계산
+            similarity = 0.0
+            if ext_edge.fact_embedding and ex_edge.fact_embedding:
+                similarity = np.dot(ext_edge.fact_embedding, ex_edge.fact_embedding)
+            
+            if similarity > 0.7:
+                if episode.uuid not in ex_edge.episodes:
+                    ex_edge.episodes.append(episode.uuid)
+                
+                # 기존 엣지 정보를 유지하고 새 에피소드만 연결
+                resolved_edges.append(ex_edge)
+                is_duplicate = True
+                break
+
+        
+        # 중복이 아니면 새로운 관계(엣지)로 추가
+        if not is_duplicate:
+            resolved_edges.append(ext_edge)
+
+    # 5. UUID 기반 최종 중복 제거
+    seen_uuids = set()
+    final_resolved = []
+    for e in resolved_edges:
+        if e.uuid not in seen_uuids:
+            final_resolved.append(e)
+            seen_uuids.add(e.uuid)
+
+    return final_resolved, invalidated_edges
 
 
 def resolve_edge_contradictions(

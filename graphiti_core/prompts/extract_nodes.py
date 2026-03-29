@@ -24,6 +24,13 @@ from .models import Message, PromptFunction, PromptVersion
 from .prompt_helpers import to_prompt_json
 from .snippets import summary_instructions
 
+class EntityFeature(BaseModel):
+    # OpenAI Strict 모드를 위해 모든 필드에 additionalProperties: False가 적용되도록 함
+    key: str = Field(..., description="특징의 이름 (예: 직업, 위치, 상태)")
+    value: str = Field(..., description="특징의 값 (예: 회장, 서울, 활성)")
+
+    class Config:
+        extra = "forbid"  # OpenAI가 요구하는 additionalProperties: false 설정
 
 class ExtractedEntity(BaseModel):
     name: str = Field(..., description='Name of the extracted entity')
@@ -31,11 +38,23 @@ class ExtractedEntity(BaseModel):
         description='ID of the classified entity type. '
         'Must be one of the provided entity_type_id integers.',
     )
+    context: str | None = Field(
+        ..., description='Surrounding context (the sentence containing the entity)'
+    )
+    # dict 대신 모델 리스트로 변경하여 스키마 충돌 방지
+    features: list[EntityFeature] = Field(
+        ..., 
+        description="엔티티 식별 특징 리스트. 없으면 빈 리스트 [] 반환"
+    )
+
+    class Config:
+        extra = "forbid"
 
 
 class ExtractedEntities(BaseModel):
     extracted_entities: list[ExtractedEntity] = Field(..., description='List of extracted entities')
-
+    class Config:
+            extra = "forbid"
 
 class MissedEntities(BaseModel):
     missed_entities: list[str] = Field(..., description="Names of entities that weren't extracted")
@@ -285,13 +304,13 @@ def extract_summary(context: dict[str, Any]) -> list[Message]:
     return [
         Message(
             role='system',
-            content='You are a helpful assistant that extracts entity summaries from the provided text.',
+            content='You are a helpful assistant that extracts entity summaries from the provided text. Always summary to korean.',
         ),
         Message(
             role='user',
             content=f"""
         Given the MESSAGES and the ENTITY, update the summary that combines relevant information about the entity
-        from the messages and relevant information from the existing summary.
+        from the messages and relevant information from the existing summary. Always summary to korean.
 
         {summary_instructions}
 

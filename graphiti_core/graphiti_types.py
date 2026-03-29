@@ -22,6 +22,7 @@ from graphiti_core.embedder import EmbedderClient
 from graphiti_core.llm_client import LLMClient
 from graphiti_core.tracer import Tracer
 
+from graphiti_core.normalize import EntityResolver
 
 class GraphitiClients(BaseModel):
     driver: GraphDriver
@@ -31,3 +32,5 @@ class GraphitiClients(BaseModel):
     tracer: Tracer
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    resolver: EntityResolver
